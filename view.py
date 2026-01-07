@@ -5,14 +5,21 @@ import os
 import math
 import base64
 import hashlib
+#👉 Đọc file theo từng khối nhỏ (chunk) 1024 byte, Mỗi lần trả ra 1 chunk, Dùng để gửi file qua UDP từng phần, không load cả file vào RAM.
+
+#Định nghĩa một hàm: path: đường dẫn tới file (vd: "a.zip") chunk_size: kích thước mỗi mảnh (mặc định 1024 byte) offset: số thứ tự chunk hiện tại (ban đầu = 0)
 def file_to_bytes(path, chunk_size=1024, offset=0):
+    #Mở file ở chế độ read binary: đọc đúng byte gốc của file bắt buộc với file .zip, .png, .exe .with đảm bảo file tự đóng khi đọc xong.
     with open(path, "rb") as f:
         while True:
+           # Di chuyển con trỏ đọc file tới vị trí:
             f.seek(offset*chunk_size)
             offset += 1
             chunk = f.read(chunk_size)
+            #Khi không còn dữ liệu để đọc:thoát vòng lặp
             if not chunk:
                 break
+           # Trả về 1 chunk duy nhất, rồi: tạm dừng hàm ,nhớ trạng thái ,lần sau gọi → tiếp tục đọc chunk kế tiếp  Vì có yield → đây là generator function
             yield chunk
 
 # def file_to_bytes1(path):
@@ -22,34 +29,42 @@ def file_to_bytes(path, chunk_size=1024, offset=0):
             
 # data = file_to_bytes1("duck.png")
 
-class Client:
+
+#Đoạn này khởi tạo client UDP: biết gửi cho server nào ,tạo UDP socket, gán cổng nguồn ,đặt timeout để phát hiện mất gói
+class Client: 
+    #Hàm khởi tạo (constructor): server_ip: IP của server .server_port: port server đang lắng nghe. "127.0.0.1" = chính máy mình (loopback)
     def __init__(self, server_ip="127.0.0.1", server_port=9000):
         # Lưu địa chỉ Server (IP, port) để dùng cho sendto()
+        #Dùng cho: sendto(data, self.server_addr) UDP không giữ kết nối, nên mỗi lần gửi phải biết rõ địa chỉ đích.
         self.server_addr = (server_ip, server_port)
-         # Tạo socket UDP (SOCK_DGRAM)
+         # Tạo socket UDP (SOCK_DGRAM) ipv4 và udp
         self.client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-         # Bind client vào một cổng nguồn bất kỳ do OS cấp phát giúp cố định port trong suốt phiên chạy
+        #Bind client vào:"0.0.0.0" → tất cả interface mạng  .0 → OS tự cấp port ngẫu nhiên Mục đích:lient có cổng nguồn cố định trong suốt phiên        
         self.client.bind(("0.0.0.0", 0))
         # Thiết lập timeout cho recvfrom()
-        # Dùng để phát hiện mất ACK → nền tảng cho retransmission
+        #chờ tối đa 2 giây không nhận được ACK → timeout
         self.client.settimeout(2)
-        
+
+    #gửi packet UDP sang server
+    #Nhận vào packet dạng dict .Packet này đã được client đóng gói (DATA / END / ERROR…)
     def send_message(self, dict):
-         # Chuyển packet dạng dict → JSON string → bytes
+    #Thực hiện 2 bước liên tiếp: json.dumps(dict) Chuyển dict → JSON string
+    #Vì packet có nhiều trường: type, file_id, chunk_index, data…
+    #.encode() Chuyển JSON string → bytes Vì UDP chỉ gửi được bytes Nếu thiếu .encode() → sendto() sẽ lỗi.
         message = json.dumps(dict).encode()
-         # Gửi packet UDP đến Server
+    #Gửi bytes tới:(server_ip, server_port) Đặc điểm UDP:Không cần connect, Mỗi lần gửi phải chỉ rõ địa chỉ đích, Gửi là xong, không biết server có nhận hay không
         self.client.sendto(message, self.server_addr)
-        
+
+#Hàm dùng để: chờ server trả lời, thường là ACK hoặc ERROR
     def receive_response(self):
         try:
-            # Nhận phản hồi từ Server (ACK hoặc ERROR)
+            # Nhận phản hồi từ Server (ACK hoặc ERROR), chờ nhận tối đa 4096 byte
             data, addr = self.client.recvfrom(4096)
+            #trả về: data: dữ liệu nhận được (bytes), addr: địa chỉ server gửi về
             return data, addr
+        #Nếu quá thời gian chờ (settimeout(2)): Không nhận được phản hồi
+        #Có thể do:gói DATA bị mất ,ACK bị mất ,trả về None để vòng lặp bên ngoài quyết định gửi lại
         except socket.timeout:
-            # Nếu timeout xảy ra:
-            # - Có thể gói DATA bị mất
-            # - Hoặc ACK từ Server bị mất
-            # Trong cả hai trường hợp, Client cần retransmit ở phiên bản nâng cao.
             return None, None
             
     def close(self):
