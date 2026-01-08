@@ -71,15 +71,22 @@ class Client:
         # Đóng socket UDP
         self.client.close()
 
+#mục đích của nó là cố tình gửi 1 gói DATA bị lỗi để server trả về ERROR, nhằm demo cơ chế kiểm tra checksum + truyền lại.
 def send_corrupted_packet(client, file_path, chunk_size=1024):
     # Gửi thử một gói DATA với checksum sai để server phản hồi ERROR
+
+    #Đọc chunk đầu tiên của file: tối đa 1024 byte đủ để test
     with open(file_path, "rb") as f:
         byte_chunk = f.read(chunk_size)
-
+#Chuyển sang bytearray Vì: bytes không chỉnh sửa được .bytearray cho phép thay đổi nội dung
+#Cần sửa dữ liệu để tạo lỗi.
     bad_data = bytearray(byte_chunk)
+
+#Ý nghĩa: ^= là XOR .0xFF = 11111111
+# đảo bit byte đầu tiên Chỉ cần sai 1 byte: checksum SHA-256 sẽ khác hoàn toàn
     if bad_data:
         bad_data[0] ^= 0xFF  # đảo 1 byte để tạo lỗi
-
+#ụm này dùng để giả lập lỗi bằng cách gửi một gói DATA có checksum sai
     packet = {
         "type": "DATA",
         "file_id": str(uuid.uuid4()),
